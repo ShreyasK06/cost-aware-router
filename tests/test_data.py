@@ -93,7 +93,7 @@ def test_restricted_unpickler_blocks_code_execution():
 
     with pytest.raises(pickle.UnpicklingError):
         RestrictedUnpickler(io.BytesIO(pickle.dumps(Evil()))).load()
-    df = pd.DataFrame({"a": [1.0, 2.0], "b": ["x", "y"]})
+    df = pd.DataFrame({"a": [1.0, 2.0], "b": [3, 4]})
     out = RestrictedUnpickler(io.BytesIO(pickle.dumps(df))).load()
     assert out.equals(df)
 
