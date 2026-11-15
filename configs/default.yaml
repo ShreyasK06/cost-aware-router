@@ -1,0 +1,47 @@
+# Cost-aware router configuration. Paths are relative to the repo root.
+
+data:
+  raw_dir: data/raw
+  cache_dir: data/cache
+  benchmark: routerbench_0shot
+
+# Model pair used for the offline benchmark (column names in RouterBench).
+pair:
+  cheap: gpt-3.5-turbo-1106
+  strong: gpt-4-1106-preview
+
+labels:
+  epsilon: 0.0          # needs_strong = (strong_score - cheap_score) > epsilon
+
+split:
+  seed: 0
+  fracs: [0.6, 0.2, 0.2]
+
+features:
+  embedder: sentence-transformers/all-MiniLM-L6-v2
+  max_seq_length: 256
+
+eval:
+  n_boot: 1000
+  seed: 0
+  quality_targets: [0.95, 0.90]   # fraction of always-strong quality
+  budget_frac: 0.5                # quality at 50% of strong-only cost
+
+serve:
+  backend: mock                   # mock | openai | anthropic   (env ROUTER_BACKEND)
+  artifact: artifacts/router_lr
+  policy: threshold               # threshold | budget
+  budget_frac: 0.3
+  db_path: data/requests.sqlite
+  cheap_model: gpt-3.5-turbo-1106
+  strong_model: gpt-4-1106-preview
+
+# USD per 1M tokens. Offline benchmark costs come from RouterBench's recorded per-prompt costs,
+# NOT from this table; this table is only used by the serving layer to price live/mock traffic.
+# These are the list prices of the benchmark pair around the time RouterBench was collected.
+# Replace them with your provider's current prices before trusting the dashboard's dollars.
+prices:
+  as_of: "2024-03-01"
+  models:
+    gpt-3.5-turbo-1106: {input_per_mtok: 1.0, output_per_mtok: 2.0}
+    gpt-4-1106-preview: {input_per_mtok: 10.0, output_per_mtok: 30.0}

@@ -1,0 +1,34 @@
+# environments
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# secrets
+.env
+.env.*
+!.env.example
+
+# data, caches, logs (the router/data/ source package is NOT ignored)
+/data/
+*.sqlite
+*.sqlite3
+*.db
+*.pkl
+*.parquet
+*.npy
+
+# large model files
+models_cache/
+checkpoints/
+*.safetensors
+*.bin
+*.pt
+*.onnx
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
