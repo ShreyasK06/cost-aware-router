@@ -1,0 +1,9 @@
+numpy
+pyyaml
+fastapi
+uvicorn[standard]
+httpx
+sentence-transformers
+scikit-learn
+streamlit
+pandas

@@ -1,0 +1,49 @@
+services:
+  router:
+    build: .
+    image: cost-aware-router
+    ports:
+      - "8000:8000"
+    environment:
+      ROUTER_BACKEND: ${ROUTER_BACKEND:-mock}
+      ROUTER_DB: /app/data/requests.sqlite
+      CHEAP_MODEL: ${CHEAP_MODEL:-}
+      STRONG_MODEL: ${STRONG_MODEL:-}
+      CHEAP_BASE_URL: ${CHEAP_BASE_URL:-}
+      STRONG_BASE_URL: ${STRONG_BASE_URL:-}
+      CHEAP_API_KEY: ${CHEAP_API_KEY:-}
+      STRONG_API_KEY: ${STRONG_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ROUTER_POLICY: ${ROUTER_POLICY:-}
+      ROUTER_THRESHOLD: ${ROUTER_THRESHOLD:-}
+      ROUTER_BUDGET_FRAC: ${ROUTER_BUDGET_FRAC:-}
+      CHEAP_PRICE_IN: ${CHEAP_PRICE_IN:-}
+      CHEAP_PRICE_OUT: ${CHEAP_PRICE_OUT:-}
+      STRONG_PRICE_IN: ${STRONG_PRICE_IN:-}
+      STRONG_PRICE_OUT: ${STRONG_PRICE_OUT:-}
+    volumes:
+      - router-data:/app/data
+      - hf-cache:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  dashboard:
+    image: cost-aware-router
+    command: ["streamlit", "run", "router/dashboards/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+    ports:
+      - "8501:8501"
+    environment:
+      ROUTER_DB: /app/data/requests.sqlite
+    volumes:
+      - router-data:/app/data:ro
+    depends_on:
+      - router
+
+volumes:
+  router-data:
+  hf-cache:

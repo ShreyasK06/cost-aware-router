@@ -1,0 +1,17 @@
+# Full environment (evaluation + serving + tests). Versions are the ones the results were produced with.
+# CPU-only torch: pip install torch --index-url https://download.pytorch.org/whl/cpu
+numpy==2.4.6
+pandas==3.1.1
+pyarrow==26.0.1
+scikit-learn==1.9.1
+matplotlib==3.11.2
+PyYAML==6.0.3
+huggingface_hub==2.4.0
+torch==2.15.0
+sentence-transformers==6.3.0
+transformers==5.23.0
+fastapi==0.163.0
+uvicorn[standard]==0.54.0
+httpx==0.28.1
+streamlit==1.67.0
+pytest==9.2.0
