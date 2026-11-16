@@ -2,38 +2,262 @@
 
 ![Cost vs quality frontier, in-distribution and out-of-distribution](assets/frontier.png)
 
+[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](Dockerfile)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Tests: 102 passed](https://img.shields.io/badge/tests-102%20passed-brightgreen.svg)](tests)
+
 A small classifier decides, per query and before any generation, whether to call a cheap LLM or a
 strong one. This repo measures the cost vs quality frontier of several such routers against
-baselines on [RouterBench](https://huggingface.co/datasets/withmartian/routerbench), and ships the
-best one as an OpenAI-compatible proxy with request logging and a dashboard.
+baselines on [RouterBench](https://huggingface.co/datasets/withmartian/routerbench) (GPT-3.5-turbo
+vs GPT-4-turbo, 36,497 prompts), with bootstrap confidence intervals and an out-of-distribution
+test, and ships the best one as an OpenAI-compatible proxy with request logging and a dashboard.
+The main finding is a negative one as much as a positive one: the in-distribution saving is large,
+but most of it comes from predicting which prompts are *expensive*, and it does not survive unseen
+task types.
 
-**Result in one paragraph.** On RouterBench (GPT-3.5-turbo vs GPT-4-turbo, 36,497 prompts), a
-logistic-regression router over a MiniLM embedding, 21 handcrafted features and a predicted-cost
-term kept **95.6% of GPT-4 quality at 67.8% lower cost on the in-distribution test split**
-(threshold frozen on validation; +8.2 quality points over random routing at the same cost).
-**It did not generalize to unseen task types:** when each task family was held out of training, the
-same recipe kept 92.0% of quality at a 21.6% cost cut, which is 2.6 points *worse* than random
-routing at the same cost. Both numbers are on the same 7,298 test prompts and have bootstrap CIs
-in the tables below.
+The test badge is the result of running `python -m pytest -q` on the committed code (102 passed;
+synthetic data and a hashing embedder, no network). The figure shows ID and OOD frontiers; both are
+on the same 7,298 test prompts.
 
-## What the experiments say
+## Headline results
 
-1. **Most of the in-distribution saving comes from knowing which prompts are expensive, not which
-   are hard.** A baseline with no quality model at all, which only predicts the strong model's
-   extra cost per prompt, gets a 66.5% cost cut at the 95% target (ID test), almost the same as the
-   full router's 67.8%. One task family (GSM8K) carries roughly half of the GPT-4 bill while GPT-4
-   is only about 5 points better on it, so the router sends all of it to the cheap model.
-2. **A plain "does this need the strong model?" classifier is no better than random at matched
-   cost.** Embedding + logistic regression gets APGR 0.637 (random is 0.5) when you count calls,
-   but at its 95% operating point its quality lift over random routing at the same dollar cost is
-   -0.01 points [-0.56, +0.48] (ID test), because the prompts it sends to the strong model are the
-   expensive ones.
-3. **Routers learn the dataset more than the difficulty.** Held-out task families (OOD) push every
-   learned router to or below random routing at matched cost. The cost-only baseline is exactly at
-   random (+0.00 points), and the plain classifier is 5.6 points below. Calibration degrades too:
-   ECE 0.015 in distribution vs 0.110 OOD.
-4. The headline router was fixed before the final run; the cost exponent and all thresholds are
-   chosen on validation data only.
+Pair: `gpt-3.5-turbo-1106` (cheap) vs `gpt-4-1106-preview` (strong). Thresholds are set on
+validation data to hit a quality target, frozen, then applied to the test prompts. Brackets are 95%
+bootstrap CIs over test prompts (1000 resamples). "Lift" is quality points above random routing at
+the same realised cost. Numbers are copied from [results/tables.md](results/tables.md).
+
+**Cost-aware logistic router (the headline router), deployed operating points**
+
+| Target | Split | Quality retained vs always-strong | Cost saving vs always-strong | Traffic to cheap | Lift vs random (points) |
+|---|---|---|---|---|---|
+| 95% of strong quality | ID test | 95.6% [95.0, 96.3] | 67.8% [66.7, 68.8] | 37.6% [36.5, 38.7] | +8.23 [+7.58, +8.97] |
+| 95% of strong quality | OOD (leave-one-family-out) | 92.0% [91.1, 92.8] | 21.6% [20.4, 22.9] | 25.7% [24.8, 26.7] | -2.59 [-3.13, -2.06] |
+| 90% of strong quality | ID test | 90.9% [90.0, 91.8] | 77.1% [76.3, 77.9] | 56.5% [55.3, 57.6] | +6.13 [+5.47, +6.86] |
+| 90% of strong quality | OOD (leave-one-family-out) | 87.7% [86.6, 88.7] | 42.1% [40.4, 43.6] | 47.8% [46.6, 49.0] | -2.40 [-2.98, -1.85] |
+
+**What each part contributes (95% target; ID test vs OOD on the same test prompts)**
+
+| Router | ID: quality | ID: cost saving | ID: lift (points) | OOD: quality | OOD: cost saving | OOD: lift (points) |
+|---|---|---|---|---|---|---|
+| Plain classifier: LR (embedding + handcrafted) | 95.1% [94.3, 95.8] | 22.4% [21.1, 23.7] | -0.01 [-0.56, +0.48] | 87.5% [86.4, 88.6] | 24.3% [23.1, 25.6] | -5.58 [-6.25, -4.94] |
+| Cost only: predicted cost, no quality model | 95.9% [95.2, 96.5] | 66.5% [65.4, 67.5] | +8.19 [+7.52, +8.95] | 91.2% [90.3, 92.1] | 40.1% [38.7, 41.7] | +0.00 [-0.57, +0.60] |
+| Cost-aware LR (headline) | 95.6% [95.0, 96.3] | 67.8% [66.7, 68.8] | +8.23 [+7.58, +8.97] | 92.0% [91.1, 92.8] | 21.6% [20.4, 22.9] | -2.59 [-3.13, -2.06] |
+
+On the test split always-cheap scores 0.624 and always-strong 0.783; the strong model costs 13.6x
+more per query. Every other router, the oracles, per-family breakdowns, calibration, robustness and
+the other model pairs are in the [full generated results](#full-generated-results) and in
+[results/tables.md](results/tables.md); [docs/RESULTS.md](docs/RESULTS.md) explains how to read them.
+
+## What this does and does not show
+
+**It shows**
+
+- On RouterBench, in distribution, a router can keep about 95% of GPT-4 quality at about two thirds
+  lower cost (ID test, threshold frozen on validation, CIs above).
+- A baseline with no quality model at all, which only predicts the strong model's extra cost per
+  prompt, gets a 66.5% saving at the same target; the headline router gets 67.8%.
+  **The in-distribution saving is cost prediction, not difficulty prediction.** One task family
+  (GSM8K) carries roughly half of the GPT-4 bill while GPT-4 is only about 5 points better on it,
+  so everything from that family goes to the cheap model.
+- **A plain "does this need the strong model?" classifier is no better than random at matched
+  cost** (lift -0.01 points, CI [-0.56, +0.48], ID test). It looks good on call-count metrics (APGR
+  0.637 vs 0.5 for random) because the prompts it sends to the strong model are the expensive ones.
+- **Out of distribution, the headline router loses to random routing at the same cost** (-2.59
+  points, CI [-3.13, -2.06]) and the plain classifier loses by 5.6 points. The cost-only baseline is
+  exactly at random (+0.00). Calibration degrades too (ECE 0.015 ID vs 0.110 OOD).
+- Within a single task family the plain classifier's ranking of prompts is modest in distribution
+  (within-family APGR 0.609, random is 0.5) and gone when the family is held out (0.486). The router
+  is mostly identifying the dataset, not the difficulty.
+
+**It does not show**
+
+- That the saving transfers to your traffic. There are no live LLM calls, no own holdout set and no
+  LLM judge (see [Not validated](#not-validated)).
+- That routing on difficulty works for these models. On held-out families the data say it does not.
+- That the numbers hold for current models or prices. The pair and prices are from 2024.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    D["RouterBench 0-shot<br/>per-prompt score and cost<br/>for every model"] --> F["Features<br/>MiniLM embedding<br/>+ 21 handcrafted"]
+    F --> R["Router<br/>one linear head:<br/>logit P(needs strong)<br/>minus alpha x predicted log extra cost"]
+    R --> P["Policy<br/>fixed threshold<br/>or online budget"]
+    P --> X["Dispatcher"]
+    X --> C["Cheap LLM"]
+    X --> S["Strong LLM"]
+    X --> L[("Logger<br/>SQLite")]
+    L --> B["Streamlit dashboard"]
+```
+
+Training and evaluation use the data and features offline (label: `needs_strong = strong_score -
+cheap_score > 0`). Serving runs features, router, policy and dispatcher per request through
+`POST /v1/chat/completions`. Module contracts and schemas: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Quick start
+
+```bash
+python -m venv .venv
+.venv/Scripts/activate                 # Windows; Linux/macOS: source .venv/bin/activate
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements.txt
+
+python -m pytest -q                    # 102 tests, synthetic data, no network
+python scripts/demo.py                 # routing demo, mock LLM backend, no keys
+python scripts/reproduce.py            # regenerates every number, table and figure
+```
+
+`scripts/reproduce.py` downloads RouterBench (about 100 MB, no token), embeds 36,497 prompts on CPU
+once (cached under `data/cache/`, roughly 10 to 40 minutes on a laptop), then takes about 10
+minutes. `--quick` uses fewer resamples and skips the MLP and robustness steps. It rewrites
+`results/`, `assets/` and the generated block at the bottom of this README.
+
+`scripts/demo.py` uses the committed router artifact. The first run downloads the MiniLM model
+(about 90 MB). Real output from a run on this repo, abridged (mock backend). The router was trained
+on benchmark-templated prompts, so its choices on these hand-written prompts are not sensible: it
+sends "What is 17 + 25?" to the strong model and a proof request to the cheap one.
+
+```text
+policy=threshold  threshold=0.223  backend=mock
+
+prompt                                                   p_strong  route  overhead ms
+--------------------------------------------------------------------------------------
+What is the capital of France?                              0.144  cheap        17.12
+What is 17 + 25?                                            0.564  strong       18.17
+Write a Python function that returns the n-th Fibon...      0.028  cheap        17.60
+Which of the following is a noble gas? A) Neon B) I...      0.350  strong       29.87
+Prove that the sum of two even integers is even, th...      0.054  cheap        16.79
+... (24 prompts in the full run)
+
+requests:                24
+routed to cheap:         66.7%  (16 of 24)
+mock cost:               $0.006481
+always-strong cost:      $0.020330
+cost saving:             68.1%
+routing overhead p50/p95: 17.65 / 28.94 ms
+```
+
+The 68.1% is on 24 hand-written prompts, priced from the config table with estimated token counts.
+It is a plumbing check, not a result.
+
+## Serving
+
+```bash
+# mock backend (default): no keys, canned answers, real routing decisions
+uvicorn router.serve.app:get_app --factory --port 8000
+curl -s localhost:8000/v1/chat/completions -H "content-type: application/json" \
+  -d '{"model":"auto","messages":[{"role":"user","content":"What is 17 + 25?"}]}'
+streamlit run router/dashboards/app.py          # reads the SQLite log (ROUTER_DB)
+
+docker compose up --build   # written, NOT built or run; see Not validated
+```
+
+`model: "auto"` routes; `"cheap"` / `"strong"` force a tier. Every response carries a `router`
+object (`route`, `p_strong`, threshold, policy, overhead) and an `x-router-route` header. The
+`x-router-threshold` header overrides the threshold per request, and `ROUTER_POLICY=budget` tracks a
+target share of strong calls online. `p_strong` is the cost-adjusted routing score in (0, 1), not a
+calibrated probability. Only a SHA-256 hash of the prompt is logged, never its text.
+
+![Streamlit dashboard over a 24-request mock-backend demo log](docs/screenshots/dashboard.png)
+
+_The dashboard over the 24-request demo log above (cropped to the main panel). "Estimated quality"
+is an offline estimate from the benchmark frontier, not measured on live traffic._
+
+### Pointing the proxy at real providers
+
+Copy `.env.example` to `.env`, or export the variables. None of this has been run against a live
+API (see [Not validated](#not-validated)).
+
+```bash
+# OpenAI-compatible endpoints (OpenAI, Groq, Together, vLLM, Ollama, Gemini's compat endpoint)
+export ROUTER_BACKEND=openai
+export CHEAP_MODEL=<cheap model id>  STRONG_MODEL=<strong model id>
+export CHEAP_BASE_URL=<url>  STRONG_BASE_URL=<url>   # optional; default https://api.openai.com/v1
+export OPENAI_API_KEY=...                            # or CHEAP_API_KEY / STRONG_API_KEY per tier
+export CHEAP_PRICE_IN=... CHEAP_PRICE_OUT=... STRONG_PRICE_IN=... STRONG_PRICE_OUT=...  # USD per 1M tokens
+uvicorn router.serve.app:get_app --factory --port 8000
+
+# Anthropic
+export ROUTER_BACKEND=anthropic ANTHROPIC_API_KEY=... CHEAP_MODEL=... STRONG_MODEL=...
+```
+
+Other settings: `ROUTER_POLICY` (`threshold` or `budget`), `ROUTER_THRESHOLD` (default: the
+artifact's 95% threshold), `ROUTER_BUDGET_FRAC`, `ROUTER_ARTIFACT`, `ROUTER_DB`. A non-mock backend
+without a key fails at startup with a message naming the missing variable. Models without a
+configured price are costed at 0, so set the prices. The shipped artifact was trained on the
+GPT-3.5/GPT-4 pair; pointing it at a different pair keeps the routing scores but not their meaning.
+
+## Repo layout
+
+```
+router/data         download, pair table, labels, splits, synthetic data
+router/features     handcrafted features, MiniLM / hashing embedders, cache
+router/models       routers (LR, ridge, kNN, MLP, cost-aware), numpy serving artifact, fine-tune
+router/eval         frontier metrics, baselines, bootstrap, calibration, robustness, latency, plots
+router/serve        FastAPI app, policies, backends (mock/openai/anthropic), SQLite log, engine
+router/dashboards   Streamlit dashboard
+configs/            default.yaml: model pair, dated prices, seeds, eval settings
+scripts/            reproduce.py (data -> results), demo.py
+tests/              pytest, synthetic data only
+artifacts/          small committed router artifact (npz + json)
+assets/  results/   figures; results.json and tables.md
+docs/               ARCHITECTURE.md, PLAN.md, RESULTS.md, screenshots/
+```
+
+## Not validated
+
+- **No live LLM calls were made.** The OpenAI-compatible and Anthropic backends are tested only
+  against mocked HTTP transports; the demo and end-to-end tests use the mock backend.
+- **No own holdout set.** The planned self-collected prompts answered by a current model pair were
+  not generated, so there is no evidence about current models.
+- **No LLM judge.** All quality numbers are RouterBench's own automatic scores.
+- **No RouteLLM or LMSYS preference data**, and RouteLLM's published routers were not reproduced.
+  The kNN router is a reimplementation in the style of the RouterBench paper.
+- **The fine-tuned encoder** (`router/models/finetune.py`, `--finetune`) is implemented but was not
+  run (CPU-only machine), so no number is reported for it.
+- **`docker compose up` was written but not built or run.**
+- **RouterBench licensing.** Its dataset card states no licence. It is downloaded at run time and
+  not redistributed here; check its terms before reusing the data.
+- Serving-layer dollar figures use the dated price table in `configs/default.yaml`; benchmark
+  numbers use the per-prompt costs recorded in RouterBench in early 2024.
+
+## Limitations
+
+- **The headline saving is in-distribution and benchmark-specific.** It depends on one task family
+  being expensive for the strong model and gaining little from it. The OOD rows are the better guide
+  for new task types.
+- **Free-form prompts are out of distribution too.** The router saw benchmark-templated prompts;
+  retrain on your own traffic before using it for anything real.
+- **Old model pair** (GPT-3.5-turbo-1106 vs GPT-4-1106-preview, 2024 prices).
+- **Benchmark, not user traffic.** Mostly multiple-choice and short-answer tasks; little open-ended
+  chat or code. Contamination and saturation of these evals are likely.
+- **Pooled OOD scores come from nine fold models**, so the pooled OOD frontier curve is an
+  approximation; the deployed operating points use per-fold thresholds and are the cleaner number.
+- **Robustness tests are surface-level** (typos, lowercasing, polite filler). There is no paraphrase
+  or adversarial set.
+- **Routing overhead** (p95 108.4 ms in the results; about 29 ms in the demo above) was measured
+  in-process on one laptop CPU under different conditions each time. It is not a server benchmark.
+
+## Roadmap
+
+- Collect an own holdout: current model pair, real prompts, judged outputs (including a
+  position-swapped LLM judge for open-ended chat).
+- Find a difficulty signal that survives held-out families, and make within-family evaluation a
+  first-class gate.
+- Live-validate the OpenAI-compatible and Anthropic backends; build and run the compose stack.
+- Run the encoder fine-tune on a GPU; compare against RouteLLM routers.
+- Three-tier routing, cascading, drift monitoring.
+
+## License
+
+Code: MIT (see [LICENSE](LICENSE)). RouterBench is not redistributed here (see
+[Not validated](#not-validated)). Reference: Hu et al., 2024, "RouterBench: A Benchmark for
+Multi-LLM Routing System".
+
+## Full generated results
+
+<details>
+<summary>All tables written by <code>scripts/reproduce.py</code> (do not edit by hand)</summary>
 
 <!-- RESULTS:START -->
 _Generated by `python scripts/reproduce.py` on 2026-11-15; do not edit by hand._
@@ -155,136 +379,4 @@ Clean APGR on the 1,500-prompt subset: 0.593.
 - Deployed as an OpenAI-compatible FastAPI proxy with 108 ms p95 routing overhead (CPU, in-process), request logging, and a cost/quality dashboard.
 <!-- RESULTS:END -->
 
-More figures: [all routers](assets/frontier_all_routers.png),
-[reliability ID](assets/reliability_id.png), [reliability OOD](assets/reliability_ood.png),
-[per task family](assets/per_task.png). Raw numbers: [results/results.json](results/results.json).
-
-## Quickstart
-
-```bash
-python -m venv .venv
-.venv/Scripts/activate                 # Windows; on Linux/macOS: source .venv/bin/activate
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install -r requirements.txt
-
-python scripts/demo.py                 # routing proxy demo, mock LLM backend, no keys needed
-python -m pytest -q                    # tests: synthetic data + hashing embedder, no network
-python scripts/reproduce.py            # regenerates every number, table and figure above
-```
-
-`scripts/demo.py` uses the committed router artifact and finishes in well under two minutes. Its
-first run downloads the MiniLM embedding model (about 90 MB) from Hugging Face; pass
-`--embedder hashing` only to smoke-test without any download (routing decisions are then
-meaningless, because the artifact was trained on MiniLM features).
-
-`scripts/reproduce.py` downloads RouterBench (about 100 MB, no token needed), embeds 36,497 prompts
-on CPU once (cached under `data/cache/`, roughly 10 to 40 minutes on a laptop) and then takes about
-10 minutes. `--quick` uses fewer bootstrap resamples and skips the MLP and robustness steps.
-
-## How it works
-
-```
-client -> router service (FastAPI, OpenAI-compatible /v1/chat/completions)
-            |-- featurizer: MiniLM sentence embedding (head + tail of the prompt) + 21 handcrafted features
-            |-- router: one linear head = logit P(needs strong) - alpha * predicted log extra cost
-            |-- policy: fixed threshold (calibrated offline) or online budget policy
-            |-- dispatcher -> cheap LLM / strong LLM (mock, OpenAI-compatible, or Anthropic backend)
-            `-- logger: SQLite (prompt hash, route, score, latency, tokens, cost, counterfactual cost)
-dashboard (Streamlit): cost vs always-strong, route mix, latency, offline quality estimate
-```
-
-* **Data and labels.** RouterBench 0-shot gives every model's score and dollar cost on every prompt,
-  so routers are trained and evaluated without paying for calls. `needs_strong = (strong_score -
-  cheap_score) > 0`. Prompts where both models fail carry no routing signal; a variant that drops
-  them from training is reported.
-* **Splits.** In-distribution: 60/20/20 random split, stratified by task family, duplicate prompts
-  kept together. OOD: leave-one-task-family-out, where the model and its threshold never see the
-  held-out family; predictions are pooled so ID and OOD are compared on the same test prompts.
-* **Evaluation harness** (`router/eval/`, built before any router): always-cheap, always-strong,
-  random routing at matched cost, a training-free length/keyword heuristic, two oracles, frontier
-  metrics (APGR, cost-quality AUC, CPT, cost at 95%/90% of strong quality, quality at half budget),
-  deployed operating points with thresholds frozen on validation, bootstrap CIs, calibration (ECE),
-  per-family breakdown, surface-perturbation robustness and routing overhead.
-* **Routers** (`router/models/`): logistic regression on embeddings, on handcrafted features, on
-  both; ridge regression of the quality gap; kNN; MLP; and the cost-aware logistic router.
-* Interfaces and schemas: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Original plan:
-  [docs/PLAN.md](docs/PLAN.md).
-
-## Serving
-
-```bash
-# mock backend (default): no keys, canned answers, real routing decisions
-uvicorn router.serve.app:get_app --factory --port 8000
-curl -s localhost:8000/v1/chat/completions -H "content-type: application/json" \
-  -d '{"model":"auto","messages":[{"role":"user","content":"What is 17 + 25?"}]}'
-streamlit run router/dashboards/app.py
-
-# real providers: copy .env.example to .env and set the backend, models, keys and prices
-ROUTER_BACKEND=openai CHEAP_MODEL=... STRONG_MODEL=... OPENAI_API_KEY=... uvicorn router.serve.app:get_app --factory
-
-docker compose up --build              # router on :8000, dashboard on :8501
-```
-
-`model: "auto"` routes; `"cheap"` / `"strong"` force a tier. Every response carries a `router`
-object (`route`, score, threshold, policy, overhead) and an `x-router-route` header. The header
-`x-router-threshold` overrides the threshold per request, and `ROUTER_POLICY=budget` switches to an
-online policy that tracks a target share of strong calls. The value the service calls `p_strong` is
-the cost-adjusted routing score in (0, 1), not a calibrated probability. Only a SHA-256 hash of the
-prompt is logged, never its text.
-
-## What was not validated against live APIs
-
-No API keys were available while building this, so:
-
-* **Live LLM calls were never made.** The OpenAI-compatible and Anthropic backends are tested only
-  against mocked HTTP transports. The demo and the end-to-end tests use the mock backend.
-* **No own holdout set.** The plan's self-collected prompts answered by a current model pair were
-  not generated, so there is no evidence about today's models.
-* **No LLM judge.** Open-ended chat quality with a position-swapped judge was not run; all quality
-  numbers are RouterBench's own automatic scores.
-* **RouteLLM / LMSYS preference data was not used**, and RouteLLM's published routers (MF, BERT)
-  were not reproduced; the kNN router is a reimplementation in the style of the RouterBench paper.
-* **`docker compose up` was written but not built or run** on the development machine.
-* **The fine-tuned encoder is implemented (`router/models/finetune.py`, `--finetune`) but was not
-  run** (CPU-only machine), so no number is reported for it.
-* Dollar figures in the serving layer use the price table in `configs/default.yaml` (dated); the
-  benchmark numbers use the per-prompt costs recorded in RouterBench in early 2024.
-
-## Limitations
-
-* **The headline saving is in-distribution and benchmark-specific.** It depends on a cost structure
-  where one task family is expensive for the strong model and gains little from it. Traffic without
-  that structure should expect much less, and the OOD rows are the better guide for new task types.
-* **OOD routing is at or below random at matched cost.** Within a task family the plain
-  classifier's ranking of prompts is modest in distribution (within-family APGR 0.609, random is
-  0.5) and gone when the family is held out (0.486), so the router is mostly identifying the dataset.
-* **Free-form prompts are out of distribution too.** The router was trained on benchmark-templated
-  prompts. On the hand-written prompts in `scripts/demo.py` its choices are not sensible (for
-  example it sends "What is 17 + 25?" to the strong model and a proof request to the cheap one).
-  Retrain on your own traffic before using it for anything real.
-* **Old model pair.** GPT-3.5-turbo-1106 vs GPT-4-1106-preview with 2024 prices. Quality gaps and
-  price ratios of current models differ.
-* **Benchmark, not user traffic.** Mostly multiple-choice and short-answer tasks with templated
-  prompts; little open-ended chat or code. Contamination and saturation of these evals are likely.
-* **Pooled OOD scores come from nine different fold models**, so the pooled OOD frontier curve is
-  an approximation; the deployed operating points use per-fold thresholds and are the cleaner number.
-* **Robustness tests are surface-level** (typos, lowercasing, polite filler). No paraphrase or
-  adversarial "easy-looking hard prompt" set was built.
-* **Routing overhead was measured in-process on one laptop CPU** while other work was running; it is
-  dominated by the MiniLM forward pass and is not a server benchmark.
-* Stretch items not done: three-tier routing, cascading, drift monitoring. The budget policy is
-  evaluated only in simulation on the test stream.
-
-## Repo layout
-
-```
-router/data  router/features  router/models  router/eval  router/serve  router/dashboards
-configs/  scripts/reproduce.py  scripts/demo.py  tests/  artifacts/  assets/  results/  docs/
-```
-
-## License and data
-
-Code: MIT (see [LICENSE](LICENSE)). RouterBench is downloaded at run time from
-`withmartian/routerbench` and is not redistributed here; its dataset card states no license, so
-check its terms before reusing the data. RouterBench: Hu et al., 2024, "RouterBench: A Benchmark for
-Multi-LLM Routing System".
+</details>
