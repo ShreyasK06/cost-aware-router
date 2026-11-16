@@ -22,6 +22,17 @@ def oracle_scores(data: EvalData) -> np.ndarray:
     return data.strong_score - data.cheap_score
 
 
+def oracle_cost_aware_scores(data: EvalData) -> np.ndarray:
+    """Oracle in cost space: quality gain per extra dollar where the strong model helps.
+
+    Prompts where strong is strictly better are ranked by gap / extra cost (greedy knapsack order);
+    ties score 0 and prompts where the cheap model is better score negative, so they are routed last.
+    """
+    gap = data.strong_score - data.cheap_score
+    extra = np.maximum(data.strong_cost - data.cheap_cost, 1e-12)
+    return np.where(gap > 0, gap / extra, np.minimum(gap, 0.0))
+
+
 def random_scores(n: int, seed: int = 0) -> np.ndarray:
     return np.random.default_rng(seed).random(n)
 

@@ -88,6 +88,9 @@ class Embedder:            # sentence-transformers wrapper
 class HashingEmbedder:     # same interface; char n-gram hashing -> 256 dims; no downloads; name == "hashing"
 get_embedder(name: str, max_seq_length=256) -> Embedder | HashingEmbedder    # "hashing" -> HashingEmbedder
 cached_embeddings(prompts, embedder, cache_dir) -> np.ndarray   # npy cache keyed by sha1(model name, max_seq_length, prompts)
+# text.py  (owner: lead)
+routing_view(prompt, head=160, tail=840) -> str   # head + tail of long prompts; this view is what gets embedded,
+                                                  # in training and in the serving engine (handcrafted features use the full prompt)
 # featurizer.py
 combine_features(emb: np.ndarray | None, hand: np.ndarray | None) -> np.ndarray   # hstack, emb first
 class Featurizer:
@@ -108,6 +111,12 @@ class LogisticRouter(BaseRouter)        # __init__(epsilon=0.0, C=1.0, class_wei
 class MLPRouter(BaseRouter)             # __init__(epsilon=0.0, hidden=(256, 64), max_iter=60, seed=0); sklearn MLPClassifier, early stopping
 class GapRegressionRouter(BaseRouter)   # __init__(alpha=10.0); StandardScaler + Ridge on gap; score = predicted gap
 class KNNRouter(BaseRouter)             # __init__(k=40); mean gap of k cosine nearest neighbours (RouterBench-style)
+# cost_aware.py  (owner: lead; the headline router)
+class CostAwareLogisticRouter(BaseRouter)   # __init__(alpha=1.0, epsilon=0.0, C=0.1, ridge_alpha=10.0)
+    def fit(self, X, gap, extra_cost)       # extra_cost = strong_cost - cheap_cost (USD per prompt)
+    def score(self, X)                      # sigmoid(logit P(needs strong) - alpha * (pred log extra cost - mean))
+    def with_alpha(self, alpha)             # same heads, new exponent; alpha is chosen on validation
+    def proba(self, X); def predicted_extra_cost(self, X); def export_linear(self) -> dict  # single linear head
 # artifact.py  (numpy + json only; imported by serve)
 class LinearRouterArtifact:
     def __init__(self, mean, scale, coef, intercept, meta: dict)
@@ -144,7 +153,8 @@ operating_point(route_strong: np.ndarray[bool], data) -> dict
     # random_quality (random routing at the SAME cost), lift_vs_random
 # baselines.py
 always_cheap(data) / always_strong(data) -> dict(quality, cost)
-oracle_scores(data) -> np.ndarray            # gap, ties favour cheap; upper bound
+oracle_scores(data) -> np.ndarray            # quality gap only
+oracle_cost_aware_scores(data) -> np.ndarray # gain per extra dollar; the upper bound in cost space
 random_scores(n, seed) -> np.ndarray
 random_quality_at_cost(cost, data) -> float  # analytic expectation of random mixing at matched cost
 heuristic_scores(prompts) -> np.ndarray      # length / keyword router, no training
