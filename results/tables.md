@@ -69,22 +69,24 @@ Benchmark: RouterBench 0-shot (withmartian/routerbench), pair `gpt-3.5-turbo-110
 
 ### Per task family (headline router, 95% target)
 
-| Task family | n test | Cheap | Strong | APGR ID | APGR OOD | APGR heuristic | Router quality ID | To strong ID | Router quality OOD | To strong OOD |
+| Task family | n test | Cheap | Strong | Within-family APGR, plain LR, ID | Within-family APGR, plain LR, OOD | Within-family APGR, heuristic | Router quality ID | To strong ID | Router quality OOD | To strong OOD |
 |---|---|---|---|---|---|---|---|---|---|---|
-| arc | 294 | 0.847 | 0.969 | 0.525 | 0.514 | 0.580 | 0.959 | 90% | 0.963 | 91% |
-| chinese | 157 | 0.287 | 0.503 | 0.596 | 0.480 | 0.484 | 0.465 | 73% | 0.363 | 43% |
-| gsm8k | 1490 | 0.604 | 0.658 | 0.480 | 0.387 | 0.536 | 0.604 | 0% | 0.653 | 96% |
-| hellaswag | 2009 | 0.598 | 0.837 | 0.467 | 0.384 | 0.640 | 0.794 | 86% | 0.653 | 43% |
+| arc | 294 | 0.847 | 0.969 | 0.592 | 0.582 | 0.580 | 0.959 | 90% | 0.963 | 91% |
+| chinese | 157 | 0.287 | 0.503 | 0.561 | 0.441 | 0.484 | 0.465 | 73% | 0.363 | 43% |
+| gsm8k | 1490 | 0.604 | 0.658 | 0.573 | 0.425 | 0.536 | 0.604 | 0% | 0.653 | 96% |
+| hellaswag | 2009 | 0.598 | 0.837 | 0.612 | 0.443 | 0.640 | 0.794 | 86% | 0.653 | 43% |
 | mbpp | 85 | 0.635 | 0.635 | 0.000 | 0.000 | 0.000 | 0.635 | 1% | 0.624 | 95% |
-| misc | 185 | 0.580 | 0.599 | -0.256 | 0.737 | 1.372 | 0.585 | 2% | 0.585 | 2% |
-| mmlu | 2808 | 0.652 | 0.818 | 0.587 | 0.485 | 0.598 | 0.794 | 78% | 0.800 | 88% |
-| mtbench | 16 | 0.744 | 0.906 | 0.562 | 0.565 | 0.483 | 0.744 | 0% | 0.750 | 6% |
-| winogrande | 254 | 0.594 | 0.823 | 0.524 | 0.535 | 0.479 | 0.823 | 100% | 0.819 | 95% |
+| misc | 185 | 0.580 | 0.599 | 0.697 | 0.720 | 1.372 | 0.585 | 2% | 0.585 | 2% |
+| mmlu | 2808 | 0.652 | 0.818 | 0.638 | 0.537 | 0.598 | 0.794 | 78% | 0.800 | 88% |
+| mtbench | 16 | 0.744 | 0.906 | 0.663 | 0.620 | 0.483 | 0.744 | 0% | 0.750 | 6% |
+| winogrande | 254 | 0.594 | 0.823 | 0.524 | 0.524 | 0.479 | 0.823 | 100% | 0.819 | 95% |
+
+Within-family APGR ranks prompts inside one task family only (0.5 = random), so it measures difficulty prediction rather than dataset identification. Test-size-weighted mean over arc, chinese, gsm8k, hellaswag, mmlu, winogrande (families with n >= 150 and a real quality gap), plain LR: 0.609 in distribution, 0.486 when the family was held out of training; length/keyword heuristic: 0.589. The 'Router quality' and 'To strong' columns are the headline cost-aware router at its 95% operating point.
 
 ### Calibration and overhead
 
 - Calibration of P(needs strong), LR (embedding + handcrafted): ECE 0.015 on ID test, 0.110 OOD (LOFO); base rate 0.251.
-- Routing overhead (embed + features + classify, single query, in-process, CPU `Intel64 Family 6 Model 140 Stepping 1, GenuineIntel`): p50 59.1 ms, p95 112.1 ms over 300 test prompts.
+- Routing overhead (embed + features + classify, single query, in-process, CPU `Intel64 Family 6 Model 140 Stepping 1, GenuineIntel`): p50 52.3 ms, p95 108.4 ms over 300 test prompts.
 
 ### Robustness to surface perturbations (ID test subset)
 
@@ -113,5 +115,5 @@ Clean APGR on the 1,500-prompt subset: 0.593.
 
 ### Resume bullets (filled from the numbers above)
 
-- Built a cost-aware LLM router (MiniLM sentence embedding + handcrafted features + logistic regression with a predicted-cost term) retaining 95.6% of strong-model accuracy while routing 38% of traffic to a cheaper model, cutting cost 68% on RouterBench (gpt-3.5-turbo-1106 vs gpt-4-1106-preview, in-distribution test split, n=7,298); on held-out task families (OOD) the same recipe retained 92.0% at a 22% cost cut, with bootstrap CIs on every number.
-- Deployed as an OpenAI-compatible FastAPI proxy with 112 ms p95 routing overhead (CPU, in-process), request logging, and a cost/quality dashboard.
+- Built a cost-aware LLM router (MiniLM sentence embedding + handcrafted features + logistic regression with a predicted-cost term) retaining 95.6% of strong-model accuracy while routing 38% of traffic to a cheaper model, cutting cost 68% on RouterBench (gpt-3.5-turbo-1106 vs gpt-4-1106-preview, in-distribution test split, n=7,298; +8.2 quality points vs random routing at equal cost). Leave-one-task-family-out evaluation showed the gain does not transfer to unseen task types (92.0% quality at a 22% cost cut, -2.6 points vs random), reported with bootstrap CIs.
+- Deployed as an OpenAI-compatible FastAPI proxy with 108 ms p95 routing overhead (CPU, in-process), request logging, and a cost/quality dashboard.

@@ -93,9 +93,9 @@ def test_restricted_unpickler_blocks_code_execution():
 
     with pytest.raises(pickle.UnpicklingError):
         RestrictedUnpickler(io.BytesIO(pickle.dumps(Evil()))).load()
-    df = pd.DataFrame({"a": [1.0, 2.0], "b": [3, 4]})
-    out = RestrictedUnpickler(io.BytesIO(pickle.dumps(df))).load()
-    assert out.equals(df)
+    arr = np.arange(6, dtype=np.float64).reshape(2, 3)
+    out = RestrictedUnpickler(io.BytesIO(pickle.dumps(arr))).load()
+    assert np.array_equal(out, arr)
 
 
 def test_routing_view_keeps_tail():
